@@ -6,139 +6,137 @@
  */
 #include "adc.h"
 #include "stm32f0xx_adc.h"
+#include "stm32f0xx.h"
+//#include "core_cm0.h"
+
+#include <stdint.h>
 
 
-unsigned short ADC_Conf (void)
+//--- VARIABLES EXTERNAS ---//
+extern volatile unsigned short adc_ch [];
+
+extern volatile unsigned char seq_ready;
+
+//--- VARIABLES GLOBALES ---//
+volatile unsigned short * p_channel;
+
+void AdcConfig (void)
 {
 	unsigned short cal = 0;
-	ADC_InitTypeDef ADC_InitStructure;
 
 	if (!RCC_ADC_CLK)
 		RCC_ADC_CLK_ON;
 
-	ADC_ClockModeConfig(ADC1, ADC_ClockMode_SynClkDiv4);
+	// preseteo los registros a default, la mayoria necesita tener ADC apagado
+	ADC1->CR = 0x00000000;
+	ADC1->IER = 0x00000000;
+	ADC1->CFGR1 = 0x00000000;
+	ADC1->CFGR2 = 0x00000000;
+	ADC1->SMPR = 0x00000000;
+	ADC1->TR = 0x0FFF0000;
+	ADC1->CHSELR = 0x00000000;
 
-	// preseteo de registros a default
-	  /* ADCs DeInit */
-	  ADC_DeInit(ADC1);
+	//set clock
+	ADC1->CFGR2 = ADC_ClockMode_SynClkDiv4;
 
-	  /* Initialize ADC structure */
-	  ADC_StructInit(&ADC_InitStructure);
+	//set resolution & trigger
+	ADC1->CFGR1 |= ADC_Resolution_10b | ADC_CFGR1_CONT;	//software trigger
 
-	  /* Configure the ADC1 in continuous mode with a resolution equal to 12 bits  */
-	  ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
-	  ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
-	  ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
-	  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
-	  ADC_InitStructure.ADC_ScanDirection = ADC_ScanDirection_Upward;
-	  ADC_Init(ADC1, &ADC_InitStructure);
+	//set sampling time
+	ADC1->SMPR |= ADC_SampleTime_239_5Cycles;
+	//ADC1->SMPR |= ADC_SampleTime_28_5Cycles;		//
+	//ADC1->SMPR |= ADC_SampleTime_7_5Cycles;		//
+	//ADC1->SMPR |= ADC_SampleTime_1_5Cycles;		//
 
-	//software by setting bit ADCAL=1.
-	//Calibration can only be initiated when the ADC is disabled (when ADEN=0).
-	//ADCAL bit stays at 1 during all the calibration sequence.
-	//It is then cleared by hardware as soon the calibration completes
-	cal = ADC_GetCalibrationFactor(ADC1);
+	//set channel selection siempre convierte creciente, termina con el canal mas alto de la secuencia
+	//ADC1->CHSELR |= ADC_Channel_0 | ADC_Channel_1 | ADC_Channel_2;
+	//ADC1->CHSELR |= ADC_Channel_1 | ADC_Channel_2;
 
+	ADC1->CHSELR |= ADC_Channel_0 | ADC_Channel_1 | ADC_Channel_2;		//modificado 03-01-16
+	ADC1->CHSELR |= ADC_Channel_3 | ADC_Channel_4 | ADC_Channel_5;		//V12V			CH0
+	ADC1->CHSELR |= ADC_Channel_6 | ADC_Channel_7 | ADC_Channel_8;		//V6V		 	CH1
+	ADC1->CHSELR |= ADC_Channel_9;										//V5V			CH2
+																		//V3V			CH3
+																		//One_Ten_Sense	CH4
+																		//One_Ten_Pote 	CH5
+																		//Vout_Sense 	CH6
+
+
+	//calibrar ADC
+	cal = ADC_GetCalFactor();
+
+	//set interrupts
+	ADC1->IER |= ADC_IT_EOC;
+
+	/* Configure NVIC for ADC */
+	/* (7) Enable Interrupt on ADC */
+	/* (8) Set priority for ADC */
+	NVIC_EnableIRQ(ADC1_IRQn); /* (7) */
+	NVIC_SetPriority(ADC1_IRQn,4); /* (8) */
+
+	p_channel = &adc_ch[0];
 	// Enable ADC1
-	ADC_Cmd(ADC1, ENABLE);
-
-	SetADC1_SampleTime ();
-
-	return cal;
+	ADC1->CR |= ADC_CR_ADEN;
 }
 
-unsigned short ReadADC1 (unsigned int channel)
+void ADC1_COMP_IRQHandler (void)
 {
-	uint32_t tmpreg = 0;
-	//GPIOA_PIN4_ON;
-	// Set channel and sample time
-	//ADC_ChannelConfig(ADC1, channel, ADC_SampleTime_7_5Cycles);	//pifia la medicion 2800 o 3400 en ves de 4095
-	//ADC_ChannelConfig(ADC1, channel, ADC_SampleTime_239_5Cycles);
-	//ADC_ChannelConfig(ADC1, ADC_Channel_0, ADC_SampleTime_239_5Cycles);
+	if (ADC1->ISR & ADC_IT_EOC)
+	{
 
-	//ADC_ChannelConfig INTERNALS
-	/* Configure the ADC Channel */
-	ADC1->CHSELR = channel;
+		if (ADC1->ISR & ADC_IT_EOSEQ)	//seguro que es channel9
+		{
+			p_channel = &adc_ch[9];
+			*p_channel = ADC1->DR;
+			p_channel = &adc_ch[0];
+			seq_ready = 1;
+		}
+		else
+		{
+			*p_channel = ADC1->DR;		//
+			if (p_channel < &adc_ch[9])
+				p_channel++;
+		}
+	}
+	//clear pending
+	ADC1->ISR |= ADC_IT_EOC | ADC_IT_EOSEQ;
 
-	/* Clear the Sampling time Selection bits */
-	tmpreg &= ~ADC_SMPR1_SMPR;
-
-	/* Set the ADC Sampling Time register */
-	tmpreg |= (uint32_t)ADC_SampleTime_239_5Cycles;
-
-	/* Configure the ADC Sample time register */
-	ADC1->SMPR = tmpreg ;
-
-
-	// Start the conversion
-	ADC_StartOfConversion(ADC1);
-	// Wait until conversion completion
-	while(ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
-	// Get the conversion value
-	//GPIOA_PIN4_OFF;	//tarda 20us en convertir
-	return ADC_GetConversionValue(ADC1);
 }
 
-//Setea el sample time en el ADC
-void SetADC1_SampleTime (void)
+
+/**
+  * @brief  Active the Calibration operation for the selected ADC.
+  * @note   The Calibration can be initiated only when ADC is still in the
+  *         reset configuration (ADEN must be equal to 0).
+  * @param  ADCx: where x can be 1 to select the ADC1 peripheral.
+  * @retval ADC Calibration factor
+  */
+uint32_t ADC_GetCalFactor(void)
 {
-	uint32_t tmpreg = 0;
+  uint32_t tmpreg = 0, calibrationcounter = 0, calibrationstatus = 0;
 
-	/* Clear the Sampling time Selection bits */
-	tmpreg &= ~ADC_SMPR1_SMPR;
+  /* Set the ADC calibartion */
+  ADC1->CR |= (uint32_t)ADC_CR_ADCAL;
 
-	/* Set the ADC Sampling Time register */
-	tmpreg |= (uint32_t)ADC_SampleTime_239_5Cycles;
+  /* Wait until no ADC calibration is completed */
+  do
+  {
+    calibrationstatus = ADC1->CR & ADC_CR_ADCAL;
+    calibrationcounter++;
+  } while((calibrationcounter != CALIBRATION_TIMEOUT) && (calibrationstatus != 0x00));
 
-	/* Configure the ADC Sample time register */
-	ADC1->SMPR = tmpreg ;
+  if((uint32_t)(ADC1->CR & ADC_CR_ADCAL) == RESET)
+  {
+    /*Get the calibration factor from the ADC data register */
+    tmpreg = ADC1->DR;
+  }
+  else
+  {
+    /* Error factor */
+    tmpreg = 0x00000000;
+  }
+  return tmpreg;
 }
 
 
-//lee el ADC sin cambiar el sample time anterior
-unsigned short ReadADC1_SameSampleTime (unsigned int channel)
-{
-	// Configure the ADC Channel
-	ADC1->CHSELR = channel;
-
-	// Start the conversion
-	ADC1->CR |= (uint32_t)ADC_CR_ADSTART;
-
-	// Wait until conversion completion
-	while((ADC1->ISR & ADC_ISR_EOC) == 0);
-
-	// Get the conversion value
-	return (uint16_t) ADC1->DR;
-}
-
-unsigned short ReadADC1Check (unsigned char channel)
-{
-	if (ADC1->CR & 0x01)			//reviso ADEN
-		return 0xFFFF;
-
-	//espero que este listo para convertir
-	while ((ADC1->ISR & 0x01) == 0);	//espero ARDY = 1
-
-	if ((ADC1->CFGR1 & 0x00010000) == 0)			//reviso DISCONTINUOS = 1
-		return 0xFFFF;
-
-	if (ADC1->CFGR1 & 0x00002000)					//reviso CONT = 0
-		return 0xFFFF;
-
-	if (ADC1->CFGR1 & 0x00000C00)					//reviso TRIGGER = 00
-		return 0xFFFF;
-
-	if (ADC1->CFGR1 & 0x00000020)					//reviso ALIGN = 0
-		return 0xFFFF;
-
-	if (ADC1->CFGR1 & 0x00000018)					//reviso RES = 00
-		return 0xFFFF;
-
-	//espero que no se este convirtiendo ADCSTART = 0
-	while ((ADC1->CR & 0x02) != 0);	//espero ADCSTART = 0
-
-	ADC1->CHSELR = 0x00000001;	//solo convierto CH0
-
-	return 1;
-}
 

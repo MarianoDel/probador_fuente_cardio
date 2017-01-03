@@ -71,6 +71,8 @@
   /* #define STM32F051 */   
   //#define STM32F072
   /* #define STM32F042 */   
+
+//#define __GNUC__
 #endif
 
 /*  Tip: To avoid modifying this file each time you need to switch between these

@@ -18,6 +18,7 @@
 #include "stm32f0x_tim.h"
 #include "stm32f0xx_it.h"
 #include "hard.h"
+#include "watchdog.h"
 
 
 #include "core_cm0.h"
@@ -61,7 +62,23 @@ volatile unsigned short freq_tim = 0;
 // ------- Externals del display LCD -------
 const char s_blank_line [] = {"                "};
 
-// ------- Externals del DMX -------
+// ------- Externals del ADC -------
+volatile unsigned char seq_ready = 0;
+
+volatile unsigned short adc_ch[10];
+
+#define V12V		adc_ch[0]
+#define V6V			adc_ch[1]
+#define V5V			adc_ch[2]
+#define V3V			adc_ch[3]
+#define VBATV		adc_ch[4]
+#define I12V		adc_ch[5]
+#define I6V			adc_ch[6]
+#define I5V			adc_ch[7]
+#define I3V			adc_ch[8]
+#define IBATV		adc_ch[9]
+
+
 //volatile unsigned char Packet_Detected_Flag;
 //volatile unsigned char dmx_receive_flag = 0;
 //volatile unsigned char DMX_channel_received = 0;
@@ -84,6 +101,8 @@ volatile unsigned char display_timer;
 volatile unsigned char switches_timer;
 volatile unsigned char filter_timer;
 
+// ------- de los switches -------
+unsigned short s1;
 
 //volatile unsigned char door_filter;
 //volatile unsigned char take_sample;
@@ -93,7 +112,8 @@ volatile unsigned char filter_timer;
 //volatile unsigned short minutes = 0;
 //
 
-// ------- de los filtros DMX -------
+// ------- de los filtros y sensado -------
+
 //#define LARGO_F		32
 //#define DIVISOR_F	5
 //unsigned char vd0 [LARGO_F + 1];
@@ -102,6 +122,8 @@ volatile unsigned char filter_timer;
 //unsigned char vd3 [LARGO_F + 1];
 //unsigned char vd4 [LARGO_F + 1];
 
+#define KV 0.0175
+#define KI 0.0175
 float fcalc = 1.0;
 
 
@@ -117,8 +139,7 @@ unsigned char EvaluateFreq (unsigned int, unsigned int);
 // ------- de los switches -------
 void UpdateSwitches (void);
 unsigned char CheckS1 (void);
-unsigned char CheckS2 (void);
-#define TIMER_FOR_CAT_SW	200
+
 
 
 
@@ -134,20 +155,10 @@ int main(void)
 {
 	unsigned char i;
 	unsigned char main_state = 0;
-#ifdef FOUR_FILTER
-	unsigned short trans1, trans2, trans3, trans4, trans5;
-	unsigned short per1, per2, per3, per4;
-#endif
-#ifdef SIXTEEN_FILTER
-	unsigned short trans[16];
-	unsigned short per[16];
-#endif
+	unsigned short vlt_int, vlt_dec;
+	unsigned short cur_int, cur_dec;
 
-	unsigned int period = 0;
-	unsigned short freq_int = 0;
-	unsigned short freq_dec = 0;
-	char str [20];
-	unsigned char n = 0;
+	char str [30];
 
 	//!< At this stage the microcontroller clock setting is already configured,
     //   this is done through SystemInit() function which is called from startup
@@ -178,10 +189,13 @@ int main(void)
 	}
 
 	//TIM Configuration.
-	TIM_3_Init();		//input capture cuenta pulsos
+	//TIM_3_Init();		//input capture cuenta pulsos
 //	TIM_14_Init();			//lo uso para detectar el break en el DMX
 	//TIM_16_Init();		//para OneShoot() cuando funciona en modo master
 	//TIM_17_Init();		//lo uso para el ADC de Igrid
+
+	//--- Analog - to - Digital ---
+		AdcConfig();
 
 		//--- PRUEBA DISPLAY LCD ---
 //		EXTIOff ();
@@ -195,10 +209,44 @@ int main(void)
 		Lcd_Command(BLINK_OFF);
 		Wait_ms(100);
 
-		while (FuncShowBlink ((const char *) "Kirno Technology", (const char *) "  Freq Counter  ", 2, BLINK_NO) != RESP_FINISH);
-		while (FuncShowBlink ((const char *) "Hardware: V1.0  ", (const char *) "Software: V1.0  ", 1, BLINK_CROSS) != RESP_FINISH);
+		while (FuncShowBlink ((const char *) "  Kirno Technology  ", (const char *) "    Freq Counter    ", 2, BLINK_NO) != RESP_FINISH);
+		while (FuncShowBlink ((const char *) "  Hardware: V1.0    ", (const char *) "  Software: V1.0    ", 1, BLINK_CROSS) != RESP_FINISH);
 
-		while (1);
+//		while (1)
+//		{
+//			if (CheckS1() > S_NO)
+//			{
+//				LCD_3ER_RENGLON;
+////				LCDTransmitStr((const char *) "RELAY_INT -> ON     ");
+////				RELAY_INT_ON;
+////				LCDTransmitStr((const char *) "RELAY_EXT -> ON     ");
+////				RELAY_EXT_ON;
+////				LCDTransmitStr((const char *) "LOAD_BAT -> ON     ");
+////				LOAD_BAT_ON;
+//				LCDTransmitStr((const char *) "LOAD_MOSFET -> ON     ");
+//				LOAD_MOSFET_ON;
+//
+//				new_t = 0;
+//			}
+//			else if (!new_t)
+//			{
+//				new_t = 1;
+//				LCD_3ER_RENGLON;
+////				LCDTransmitStr((const char *) "RELAY_INT -> OFF    ");
+////				RELAY_INT_OFF;
+////				LCDTransmitStr((const char *) "RELAY_EXT -> OFF    ");
+////				RELAY_EXT_OFF;
+////				LCDTransmitStr((const char *) "LOAD_BAT -> OFF    ");
+////				LOAD_BAT_OFF;
+//				LCDTransmitStr((const char *) "LOAD_MOSFET -> OFF    ");
+//				LOAD_MOSFET_OFF;
+//
+//
+//			}
+//
+//			 UpdateSwitches ();
+//
+//		}
 
 		LCD_1ER_RENGLON;
 		LCDTransmitStr((const char *) "       Kirno        ");
@@ -219,144 +267,122 @@ int main(void)
 	 {
 		 switch (main_state)
 		 {
-			 case TAKE_FREQ:
-				 if (new_t)
-				 {
-					 new_t = 0;
-#ifdef FOUR_FILTER
-					 //tengo un periodo
-					 switch (n)		//n son los flancos
-					 {
-						 case 0:
-							 n = 1;
-							 trans1 = freq_tim;
-							 break;
-
-						 case 1:
-							 trans2 = freq_tim;
-							 if (trans1 < trans2)	//no dio la vuelta
-							 {
-								 per1 = trans2 - trans1;
-							 }
-							 else
-							 {
-								 per1 = 0xFFFF - trans1;
-								 per1 += trans2;
-							 }
-							 n++;
-							 break;
-
-						 case 2:
-							 trans3 = freq_tim;
-							 if (trans2 < trans3)	//no dio la vuelta
-							 {
-								 per2 = trans3 - trans2;
-							 }
-							 else
-							 {
-								 per2 = 0xFFFF - trans2;
-								 per2 += trans3;
-							 }
-
-							 if (EvaluateFreq(per1, per2))
-								 n++;
-							 else
-								 n = 0;
-
-							 break;
-
-						 case 3:
-							 trans4 = freq_tim;
-							 if (trans3 < trans4)	//no dio la vuelta
-							 {
-								 per3 = trans4 - trans3;
-							 }
-							 else
-							 {
-								 per3 = 0xFFFF - trans3;
-								 per3 += trans4;
-							 }
-
-							 if (EvaluateFreq(per2, per3))
-								 n++;
-							 else
-								 n = 0;
-
-							 break;
-
-						 case 4:
-							 trans5 = freq_tim;
-							 if (trans5 < trans4)	//no dio la vuelta
-							 {
-								 per4 = trans5 - trans4;
-							 }
-							 else
-							 {
-								 per4 = 0xFFFF - trans4;
-								 per4 += trans5;
-							 }
-
-							 if (EvaluateFreq(per3, per4))
-							 {
-								 main_state = CALC_FREQ;
-								 period = per1 + per2 + per3 + per4;
-								 period >>= 2;
-							 }
-							 else
-								 n = 0;
-
-							 break;
-					 }
-#endif
-#ifdef SIXTEEN_FILTER
-					 if (n > 0)		//venia teniendo transcisiones
-					 {
-						 if (n & 0x01)	//es impar, es el comienzo de una nueva transcision
-						 {
-
-
-						 }
-						 else			//es par es el final de la transcision
-						 {
-
-						 }
-					 }
-#endif
-				 }
-
-				 if (!timer_standby)
-				 {
-					 timer_standby = 2000;
-					 LCD_1ER_RENGLON;
-					 LCDTransmitStr((char *) (const char *) "No carrier      ");
-
-					 LCD_2DO_RENGLON;
-					 LCDTransmitStr(s_blank_line);
-				 }
+			 case SYNC_SAMPLES:
+				 seq_ready = 0;
+				 ADC1->CR |= ADC_CR_ADSTART;
+				 main_state++;
 
 				 break;
 
-			 case CALC_FREQ:
-				 //corrijo el defasaje
-				 //supongo dividido 10000; 43KHz
-				 fcalc = 48e6 / period;
-				 freq_int = (short) (fcalc / 100);
-				 fcalc = fcalc - freq_int * 100;
-				 freq_dec = (short) fcalc;
-
-				 main_state = SHOW_FREQ;
-
+			 case SYNC_SAMPLES_1:
+				 if (seq_ready)		//deberia estar en sync
+				 {
+					 seq_ready = 0;
+					 main_state++;
+				 }
 				 break;
 
-			 case SHOW_FREQ:
+			 case TAKE_SAMPLES:
+				 if (seq_ready)		//termine de tomar muestras
+				 {
+					 main_state++;
+				 }
+				 break;
+
+			 case SHOW_VOLTAGE:
 				 //muestro resultados
-				 //LED1_ON;		//muestra en aprox 120ms
+				 fcalc = V12V * KV;
+				 vlt_int = (short) fcalc;
+				 fcalc = fcalc - vlt_int;
+				 fcalc = fcalc * 100;
+				 vlt_dec = (short) fcalc;
+
 				 LCD_1ER_RENGLON;
-				 sprintf(str, "Fq = %3d.%03d MHz", freq_int, freq_dec);
+				 sprintf(str, "V12= %2d.%02d ", vlt_int, vlt_dec);
+				 //sprintf(str, "V12V = %4d ", V12V);
 				 LCDTransmitStr(str);
 
+				 fcalc = V6V * KV;
+				 vlt_int = (short) fcalc;
+				 fcalc = fcalc - vlt_int;
+				 fcalc = fcalc * 100;
+				 vlt_dec = (short) fcalc;
+
 				 LCD_2DO_RENGLON;
-				 sprintf(str, "pulses = %5d ", period);
+				 sprintf(str, "V6V= %2d.%02d ", vlt_int, vlt_dec);
+				 //sprintf(str, "V6V = %4d ", V6V);
+				 LCDTransmitStr(str);
+
+				 fcalc = V5V * KV;
+				 vlt_int = (short) fcalc;
+				 fcalc = fcalc - vlt_int;
+				 fcalc = fcalc * 100;
+				 vlt_dec = (short) fcalc;
+
+				 LCD_3ER_RENGLON;
+				 sprintf(str, "V5V= %2d.%02d ", vlt_int, vlt_dec);
+				 //sprintf(str, "V5V = %4d ", V5V);
+				 LCDTransmitStr(str);
+
+				 fcalc = V3V * KV;
+				 vlt_int = (short) fcalc;
+				 fcalc = fcalc - vlt_int;
+				 fcalc = fcalc * 100;
+				 vlt_dec = (short) fcalc;
+
+				 LCD_4TO_RENGLON;
+				 sprintf(str, "V3V= %2d.%02d ", vlt_int, vlt_dec);
+				 //sprintf(str, "V3V = %4d ", V3V);
+				 LCDTransmitStr(str);
+
+				 main_state = SHOW_CURRENT;
+
+				 break;
+
+			 case SHOW_CURRENT:
+				 //muestro resultados
+				 fcalc = I12V * KI;
+				 cur_int = (short) fcalc;
+				 fcalc = fcalc - cur_int;
+				 fcalc = fcalc * 100;
+				 cur_dec = (short) fcalc;
+
+				 Lcd_SetDDRAM(0x00 + 11);	//1ER
+				 sprintf(str, "I= %1d.%03d ", cur_int, cur_dec);
+				 //sprintf(str, "V12V = %4d ", V12V);
+				 LCDTransmitStr(str);
+
+				 fcalc = I6V * KI;
+				 cur_int = (short) fcalc;
+				 fcalc = fcalc - cur_int;
+				 fcalc = fcalc * 100;
+				 cur_dec = (short) fcalc;
+
+				 Lcd_SetDDRAM(0x40 + 11);	//2DO
+				 sprintf(str, "I= %1d.%03d ", cur_int, cur_dec);
+				 //sprintf(str, "V6V = %4d ", V6V);
+				 LCDTransmitStr(str);
+
+				 fcalc = I5V * KI;
+				 cur_int = (short) fcalc;
+				 fcalc = fcalc - cur_int;
+				 fcalc = fcalc * 100;
+				 cur_dec = (short) fcalc;
+
+				 Lcd_SetDDRAM(0x14 + 11);	//3ER
+				 sprintf(str, "I= %1d.%03d ", cur_int, cur_dec);
+				 //sprintf(str, "V5V = %4d ", V5V);
+				 LCDTransmitStr(str);
+
+				 fcalc = I3V * KI;
+				 cur_int = (short) fcalc;
+				 fcalc = fcalc - cur_int;
+				 fcalc = fcalc * 100;
+				 cur_dec = (short) fcalc;
+
+				 Lcd_SetDDRAM(0x54 + 11);	//4TO
+				 sprintf(str, "I= %1d.%03d ", cur_int, cur_dec);
+				 //sprintf(str, "V3V = %4d ", V3V);
 				 LCDTransmitStr(str);
 
 				 timer_standby = 300;
@@ -364,31 +390,31 @@ int main(void)
 
 				 break;
 
+//
 			 case WAITING_SHOW:
 				 if (!timer_standby)
 				 {
-					 timer_standby = 2000;
-					 main_state = TAKE_FREQ;
+					 main_state = SYNC_SAMPLES_1;
 				 }
 				 break;
 
 			 default:
-				 main_state = TAKE_FREQ;
+				 main_state = SYNC_SAMPLES;
 				 break;
 		 }
 
 		 //inicio cuestiones particulares
 		 //iniciar variables de usao del programa segun funcion de memoria
-
+		 UpdateSwitches ();
+#ifdef WITH_HARDWARE_WATCHDOG
+		KickWatchdog();
+#endif
 
 
 	 }	//termina while(1)
 
 
 
-#ifdef WITH_HARDWARE_WATCHDOG
-		KickWatchdog();
-#endif
 
 	return 0;
 }
@@ -401,30 +427,38 @@ void Update_PWM (unsigned short pwm)
 	Update_TIM3_CH2 (4095 - pwm);
 }
 
-//Recibe dos freq (timers) y revisa cercania +/- 10%
-//contesta 1 ok 0 nok
-unsigned char EvaluateFreq (unsigned int f1, unsigned int f2)
+
+void UpdateSwitches (void)
 {
-	unsigned int percent = 0;
-
-	percent = f1 / 10;
-
-	if (f1 > f2)
+	//revisa los switches cada 10ms
+	if (!switches_timer)
 	{
-		f1 -= f2;
-		if (f1 < percent)
-			return 1;
+		if (S1_PIN)
+			s1++;
+		else if (s1 > 50)
+			s1 -= 50;
+		else if (s1 > 10)
+			s1 -= 5;
+		else if (s1)
+			s1--;
+
+		switches_timer = SWITCHES_TIMER_RELOAD;
 	}
-	else
-	{
-		f2 -= f1;
-		if (f2 < percent)
-			return 1;
-	}
-	return 0;
 }
 
+unsigned char CheckS1 (void)	//cada check tiene 10ms
+{
+	if (s1 > SWITCHES_THRESHOLD_FULL)
+		return S_FULL;
 
+	if (s1 > SWITCHES_THRESHOLD_HALF)
+		return S_HALF;
+
+	if (s1 > SWITCHES_THRESHOLD_MIN)
+		return S_MIN;
+
+	return S_NO;
+}
 
 
 
@@ -455,7 +489,4 @@ void TimingDelay_Decrement(void)
 
 
 }
-
-
-
 

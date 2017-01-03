@@ -82,8 +82,8 @@ void GPIO_Config (void)
 	GPIOA->OSPEEDR = temp;
 
 	temp = GPIOA->PUPDR;	//2 bits por pin
-	temp &= 0xFFF3FFFF;
-	temp |= 0x00040000;		//PA9 con pullup
+	temp &= 0xFFF303FF;
+	temp |= 0x0004A800;		//PA5 - PA7 pulldwn; PA9 con pullup
 	GPIOA->PUPDR = temp;
 
 
