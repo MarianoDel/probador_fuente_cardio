@@ -132,7 +132,8 @@ float fcalc = 1.0;
 void Delay(__IO uint32_t nTime);
 void TimingDelay_Decrement(void);
 
-unsigned char EvaluateFreq (unsigned int, unsigned int);
+void ConvertVoltage (unsigned short med, unsigned short *, unsigned short *);
+void ConvertCurrent (unsigned short med, unsigned short *, unsigned short *);
 
 
 
@@ -156,7 +157,9 @@ int main(void)
 	unsigned char i;
 	unsigned char main_state = 0;
 	unsigned short vlt_int, vlt_dec;
+	unsigned short vlt2_int, vlt2_dec;
 	unsigned short cur_int, cur_dec;
+	unsigned short cur2_int, cur2_dec;
 
 	char str [30];
 
@@ -195,22 +198,22 @@ int main(void)
 	//TIM_17_Init();		//lo uso para el ADC de Igrid
 
 	//--- Analog - to - Digital ---
-		AdcConfig();
+	AdcConfig();
 
 		//--- PRUEBA DISPLAY LCD ---
 //		EXTIOff ();
-		LCDInit();
+	LCDInit();
 
 		//--- Welcome code ---//
-		Lcd_Command(CLEAR);
-		Wait_ms(100);
-		Lcd_Command(CURSOR_OFF);
-		Wait_ms(100);
-		Lcd_Command(BLINK_OFF);
-		Wait_ms(100);
+	Lcd_Command(CLEAR);
+	Wait_ms(100);
+	Lcd_Command(CURSOR_OFF);
+	Wait_ms(100);
+	Lcd_Command(BLINK_OFF);
+	Wait_ms(100);
 
-		while (FuncShowBlink ((const char *) "  Kirno Technology  ", (const char *) "    Freq Counter    ", 2, BLINK_NO) != RESP_FINISH);
-		while (FuncShowBlink ((const char *) "  Hardware: V1.0    ", (const char *) "  Software: V1.0    ", 1, BLINK_CROSS) != RESP_FINISH);
+	while (FuncShowBlink ((const char *) "  Kirno Technology  ", (const char *) "    Freq Counter    ", 2, BLINK_NO) != RESP_FINISH);
+	while (FuncShowBlink ((const char *) "  Hardware: V1.0    ", (const char *) "  Software: V1.0    ", 1, BLINK_CROSS) != RESP_FINISH);
 
 //		while (1)
 //		{
@@ -248,14 +251,14 @@ int main(void)
 //
 //		}
 
-		LCD_1ER_RENGLON;
-		LCDTransmitStr((const char *) "       Kirno        ");
-		LCD_2DO_RENGLON;
-		LCDTransmitStr((const char *) "     Technology     ");
-		LCD_3ER_RENGLON;
-		LCDTransmitStr((const char *) "  Banco de Pruebas  ");
-		LCD_4TO_RENGLON;
-		LCDTransmitStr((const char *) "                    ");
+	LCD_1ER_RENGLON;
+	LCDTransmitStr((const char *) "       Kirno        ");
+	LCD_2DO_RENGLON;
+	LCDTransmitStr((const char *) "     Technology     ");
+	LCD_3ER_RENGLON;
+	LCDTransmitStr((const char *) "  Banco de Pruebas  ");
+	LCD_4TO_RENGLON;
+	LCDTransmitStr((const char *) "                    ");
 
 	 //PRUEBA LED Y OE
 
@@ -263,6 +266,10 @@ int main(void)
 
 
 	 //--- Main loop ---//
+	LOAD_MOSFET_OFF;
+	RELAY_EXT_OFF;
+	RELAY_INT_OFF;
+
 	 while (1)
 	 {
 		 switch (main_state)
@@ -282,6 +289,184 @@ int main(void)
 				 }
 				 break;
 
+			 case BAT_INT_WITHOUT_220:
+				 LCD_1ER_RENGLON;
+				 LCDTransmitStr((const char *) "BAT INT descon 220V ");
+				 LCD_2DO_RENGLON;
+				 LCDTransmitStr((const char *) "Tensiones sin Carga ");
+				 LOAD_MOSFET_OFF;
+				 RELAY_EXT_OFF;
+				 RELAY_INT_ON;
+				 main_state++;
+				 break;
+
+			 case BAT_INT_WITHOUT_220_1:
+				 if (!timer_standby)
+				 {
+					 LCD_3ER_RENGLON;
+					 ConvertVoltage (V12V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V5V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V12=%2d.%02d V5V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 LCD_4TO_RENGLON;
+					 ConvertVoltage (V6V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V3V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V6V=%2d.%02d V3V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 timer_standby = 300;
+				 }
+
+				 if (CheckS1() > S_NO)
+					 main_state++;
+				 break;
+
+			 case BAT_INT_WITHOUT_220_LOAD:
+//				 LCD_1ER_RENGLON;
+//				 LCDTransmitStr((const char *) "BAT INT descon 220V ");
+				 LCD_2DO_RENGLON;
+				 LCDTransmitStr((const char *) "  V e I con Carga   ");
+				 LOAD_MOSFET_ON;
+				 main_state++;
+				 break;
+
+			 case BAT_INT_WITHOUT_220_1_LOAD:
+				 if (!timer_standby)
+				 {
+					 LCD_3ER_RENGLON;
+					 ConvertVoltage (V12V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V5V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V12=%2d.%02d V5V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 LCD_4TO_RENGLON;
+					 ConvertVoltage (V6V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V3V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V6V=%2d.%02d V3V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 timer_standby = 500;
+					 main_state++;
+				 }
+
+				 if (CheckS1() > S_NO)
+					 main_state = BAT_EXT_WITHOUT_220;
+
+				 break;
+
+			 case BAT_INT_WITHOUT_220_2_LOAD:
+				 if (!timer_standby)
+				 {
+					 LCD_3ER_RENGLON;
+					 ConvertCurrent (I12V, &cur_int, &cur_dec);
+					 ConvertCurrent (I5V, &cur2_int, &cur2_dec);
+					 sprintf(str, "I12=%1d.%03d I5V=%1d.%03d", cur_int, cur_dec, cur2_int, cur2_dec);
+					 LCDTransmitStr(str);
+
+					 LCD_4TO_RENGLON;
+					 ConvertCurrent (I6V, &cur_int, &cur_dec);
+					 ConvertCurrent (I3V, &cur2_int, &cur2_dec);
+					 sprintf(str, "I6V=%1d.%03d I3V=%1d.%03d", cur_int, cur_dec, cur2_int, cur2_dec);
+					 LCDTransmitStr(str);
+
+					 timer_standby = 500;
+					 main_state--;
+				 }
+
+				 if (CheckS1() > S_NO)
+					 main_state = BAT_EXT_WITHOUT_220;
+
+				 break;
+
+			 case BAT_EXT_WITHOUT_220:
+				 LCD_1ER_RENGLON;
+				 LCDTransmitStr((const char *) "BAT EXT descon 220V ");
+				 LCD_2DO_RENGLON;
+				 LCDTransmitStr((const char *) "Tensiones sin Carga ");
+				 LOAD_MOSFET_OFF;
+				 RELAY_INT_OFF;
+				 RELAY_EXT_ON;
+				 main_state++;
+				 break;
+
+			 case BAT_EXT_WITHOUT_220_1:
+				 if (!timer_standby)
+				 {
+					 LCD_3ER_RENGLON;
+					 ConvertVoltage (V12V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V5V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V12=%2d.%02d V5V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 LCD_4TO_RENGLON;
+					 ConvertVoltage (V6V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V3V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V6V=%2d.%02d V3V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 timer_standby = 300;
+				 }
+
+				 if (CheckS1() > S_NO)
+					 main_state++;
+				 break;
+
+			 case BAT_EXT_WITHOUT_220_LOAD:
+//				 LCD_1ER_RENGLON;
+//				 LCDTransmitStr((const char *) "BAT INT descon 220V ");
+				 LCD_2DO_RENGLON;
+				 LCDTransmitStr((const char *) "  V e I con Carga   ");
+				 LOAD_MOSFET_ON;
+				 main_state++;
+				 break;
+
+			 case BAT_EXT_WITHOUT_220_1_LOAD:
+				 if (!timer_standby)
+				 {
+					 LCD_3ER_RENGLON;
+					 ConvertVoltage (V12V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V5V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V12=%2d.%02d V5V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 LCD_4TO_RENGLON;
+					 ConvertVoltage (V6V, &vlt_int, &vlt_dec);
+					 ConvertVoltage (V3V, &vlt2_int, &vlt2_dec);
+					 sprintf(str, "V6V=%2d.%02d V3V=%2d.%02d", vlt_int, vlt_dec, vlt2_int, vlt2_dec);
+					 LCDTransmitStr(str);
+
+					 timer_standby = 500;
+					 main_state++;
+				 }
+
+				 if (CheckS1() > S_NO)
+					 main_state = BAT_EXT;
+				 break;
+
+			 case BAT_EXT_WITHOUT_220_2_LOAD:
+				 if (!timer_standby)
+				 {
+					 LCD_3ER_RENGLON;
+					 ConvertCurrent (I12V, &cur_int, &cur_dec);
+					 ConvertCurrent (I5V, &cur2_int, &cur2_dec);
+					 sprintf(str, "I12=%1d.%03d I5V=%1d.%03d", cur_int, cur_dec, cur2_int, cur2_dec);
+					 LCDTransmitStr(str);
+
+					 LCD_4TO_RENGLON;
+					 ConvertCurrent (I6V, &cur_int, &cur_dec);
+					 ConvertCurrent (I3V, &cur2_int, &cur2_dec);
+					 sprintf(str, "I6V=%1d.%03d I3V=%1d.%03d", cur_int, cur_dec, cur2_int, cur2_dec);
+					 LCDTransmitStr(str);
+
+					 timer_standby = 500;
+					 main_state--;
+				 }
+
+				 if (CheckS1() > S_NO)
+					 main_state++;
+				 break;
+
 			 case TAKE_SAMPLES:
 				 if (seq_ready)		//termine de tomar muestras
 				 {
@@ -291,11 +476,12 @@ int main(void)
 
 			 case SHOW_VOLTAGE:
 				 //muestro resultados
-				 fcalc = V12V * KV;
-				 vlt_int = (short) fcalc;
-				 fcalc = fcalc - vlt_int;
-				 fcalc = fcalc * 100;
-				 vlt_dec = (short) fcalc;
+//				 fcalc = V12V * KV;
+//				 vlt_int = (short) fcalc;
+//				 fcalc = fcalc - vlt_int;
+//				 fcalc = fcalc * 100;
+//				 vlt_dec = (short) fcalc;
+				 ConvertVoltage (V12V, &vlt_int, &vlt_dec);
 
 				 LCD_1ER_RENGLON;
 				 sprintf(str, "V12= %2d.%02d ", vlt_int, vlt_dec);
@@ -427,6 +613,25 @@ void Update_PWM (unsigned short pwm)
 	Update_TIM3_CH2 (4095 - pwm);
 }
 
+//recibe el valor de tension a convertir (short) y dos punteros al valor entero y decimal (short)
+void ConvertVoltage (unsigned short med, unsigned short * ent, unsigned short * dec)
+{
+	 fcalc = med * KV;
+	 *ent = (short) fcalc;
+	 fcalc = fcalc - *ent;
+	 fcalc = fcalc * 100;
+	 *dec = (short) fcalc;
+}
+
+//recibe el valor de corriente a convertir (short) y dos punteros al valor entero y decimal (short)
+void ConvertCurrent (unsigned short med, unsigned short * ent, unsigned short * dec)
+{
+	 fcalc = med * KI;
+	 *ent = (short) fcalc;
+	 fcalc = fcalc - *ent;
+	 fcalc = fcalc * 100;
+	 *dec = (short) fcalc;
+}
 
 void UpdateSwitches (void)
 {
